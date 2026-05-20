@@ -36,15 +36,22 @@ async def chat(user_id: int, user_message: str) -> str:
     Maintains a rolling conversation window per ``user_id``.
     """
     history = _history[user_id]
-    history.append({"role": "user", "content": user_message})
 
+    # Build the request payload from a snapshot of history + the new turn.
+    # We do NOT mutate ``history`` yet: if the upstream call fails, the
+    # user turn must not pollute future context (and trigger spurious
+    # eviction of older turns under the bounded HISTORY_LIMIT).
     messages: List[dict] = [{"role": "system", "content": config.SYSTEM_PROMPT}]
     messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
 
     response = await _client.chat.completions.create(
         model=config.OPENAI_MODEL,
         messages=messages,
     )
     reply = (response.choices[0].message.content or "").strip()
+
+    # Commit both turns to history only after a successful response.
+    history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": reply})
     return reply
